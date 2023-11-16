@@ -198,7 +198,11 @@ float map(float x, float in_min, float in_max, float out_min, float out_max){
 }
 
 void deepSleep(){
-  lastDeviceOn = false;
+  fHold1 = 0.5 * (fMax + fMin);//when device is turned off using the button, the frequency returns back to mid point the next time it turns on
+  sleepTimerStart = false;
+  freqSweepMode = false;//always have freqSweepMode set to false while turning off, so that it turns on with the same mode everytime
+  modeBeeped = false;
+  delay(50);
   myMag1.disableYZChannels();//disable YZ channels to save power while esp goes to sleep 
   Serial.println(myMag1.areYZChannelsEnabled());
   Serial.println("Going to sleep now");
@@ -240,6 +244,21 @@ void turnPinOn(){
     Serial.println(myMag1.areYZChannelsEnabled());
 }
 
+void buttonMode(){
+  if (buttonState == LOW && buttonPressed == false) {
+    buttonTimer = millis();
+    buttonPressed = true;
+    sleepTimerStart = true;
+
+    while(buttonState != HIGH){ //not released  
+      if (millis() - buttonTimer > buttonHoldDur){ //Go to deepsleep
+        deepSleep();
+      }
+      buttonState =  digitalRead(buttonPin);
+    }
+  }
+}
+
 void rockerCalibration(){
     rockerMid = myMag1.getMeasurementZ();//set middle rocker reading when system starts
     buffer3.push(rockerMid); //push rockerMid value into buffer3 to get averaged rockMid - rockerMidAvg
@@ -256,15 +275,32 @@ void rockerCalibration(){
     toggleMin = threshold2; //set initial toggle min value at threshold2
 }
 
-void freqMode(){
-      if (modeBeeped == false) {      //beeping indicating the mode
+void modeSwitchBeep(){
+  if (modeBeeped == false) {      //beeping indicating the mode
 
-      for (int i = 40; i < 300; i = i + 30) {
-        vh.vibrate(i, 0.5, 2000 / i, dutyCycle, 0, 0);
-      }
-      modeBeeped = true;
-      delay(190);
+    for (int i = 40; i < 300; i = i + 30) {
+      vh.vibrate(i, 0.5, 2000 / i, dutyCycle, 0, 0);
     }
+  
+    modeBeeped = true;
+    delay(190);
+  }
+}
+
+void storeRange(){
+    Serial.println(fHold1);
+    Serial.println(intHold1);
+
+    upperRange = rockerHigh - rockerMid;//stores updated upper and lower range into the memory so next time the latest value is being read
+    lowerRange = rockerMid - rockerLow;
+    preferences.begin("toggleRange", false);
+    preferences.putInt("upperRange", upperRange);
+    preferences.putInt("lowerRange", lowerRange);
+    preferences.end();
+}
+
+void freqMode(){
+    modeSwitchBeep();
     togglePos = rockerVal;
     //now we have a buffered mag reading named as togglePos, which is the main input in the following code
 
@@ -305,8 +341,6 @@ void freqMode(){
 
     if (togglePos > threshold2 && togglePos < threshold1) { //reset function: when toggle moves back within the thresholds, reset
       vh.vibrate(fHold1, intHold1, 2000 / fHold1, dutyCycle, 0, 0); // vibration output when toggle switch reset
-      //2000/fHold1 (in millisecond) represents the duration that is 2 full cycles of vibration based on the input frequency
-      //fHold2 = 81.0085 * log(fHold1) - 176.2951; //when togglePos returns, update fHold2 with the latest fHold1 for next the next mapping to be valid
       fHold2 = sqrt((fHold1 - 9.66) / 0.00345);//curve equation (reset) to replace the linear mapping
       if (toggleMax > rockerHighAvg && pushCounterHigh <= pushCounterLimit) { //push new max value to rockerHigh buffer if it is higher than average
         buffer2.push(toggleMax);
@@ -333,71 +367,19 @@ void freqMode(){
 
       threshold1 = rockerMid + thresholdPercentage * (rockerHigh - rockerMid); //the threshold values that triggers the increment in fTransient
       threshold2 = rockerMid - thresholdPercentage * (rockerMid - rockerLow); //the threshold values that triggers the decrement in fTransient
-
       toggleMax = threshold1;//reset toggleMax and toggleMin back to thresholds
       toggleMin = threshold2;
-      // Serial.println(fTransient);
     }
 
-    //USEFUL PRINTS FOR DEBUGGING/////////////
-    Serial.println(fHold1);
-    Serial.println(intHold1);
-    //        Serial.print("fholdMap: ");
-    //        Serial.println(map(fHold1, fMin, fMax, rockerLow, rockerHigh));
-    //
+    storeRange();
+    buttonMode();
 
-    //
-    //        Serial.print("rocker Mid: ");
-    //        Serial.println(rockerMid);
-    //        Serial.print("rockerHigh: ");
-    //        Serial.println(rockerHigh);
-    //        Serial.print("rockerLow: ");
-    //        Serial.println(rockerLow);
-    //
-    //        Serial.print("toggle pos: ");
-    //        Serial.println(togglePos);
-    //////////////////////////////////////////
-
-    upperRange = rockerHigh - rockerMid;//stores updated upper and lower range into the memory so next time the latest value is being read
-    lowerRange = rockerMid - rockerLow;
-    preferences.begin("toggleRange", false);
-    preferences.putInt("upperRange", upperRange);
-    preferences.putInt("lowerRange", lowerRange);
-    preferences.end();
-    //}
-
-    /////////////////////////////////////////
-    //MOTOR TURN OFF FUNCTION: when button pushed during main function running, the motor turns off
-    if (buttonState == LOW && buttonPressed == false) {
-      buttonTimer = millis();
-      buttonPressed = true;
-      sleepTimerStart = true;
-      lastDeviceOn = true;
-    }
-    if (sleepTimerStart == true && buttonPressed == true) {
-      if (buttonState == LOW && millis() - buttonTimer > buttonHoldDur) {
-        deviceOn = false;
-        fHold1 = 0.5 * (fMax + fMin);//when device is turned off using the button, the frequency returns back to mid point the next time it turns on
-        sleepTimerStart = false;
-        freqSweepMode = false;//always have freqSweepMode set to false while turning off, so that it turns on with the same mode everytime
-        modeBeeped = false;
-        delay(50);
-      }
-    }
 }
 
 void intensityMode(){
-  
-    if (modeBeeped == false) { //beeping indicating intensity sweep function
-      delay(50);
-      vh.vibrate(100, 0.5, 80, dutyCycle, 0, 0);
-      delay(50);
-      vh.vibrate(100, 0.25, 80, dutyCycle, 0, 0);
-      delay(190);
-      modeBeeped = true;
-    }
-
+    modeSwitchBeep();
     togglePos = rockerVal;
+
     if (togglePos > threshold1)  { //linearly increase toggleMax to a new value if togglePos goes larger
       if (togglePos > toggleMax) {
         toggleMax = togglePos;
@@ -414,7 +396,6 @@ void intensityMode(){
       vh.vibrate(fHold1, intHold1, 2000 / fHold1, dutyCycle, 0, 0); //vibrate using the recent fHold1 value
       //2000/fHold1 (in millisecond) represents the duration that is 2 full cycles of vibration based on the input frequency
     }
-
 
     if (togglePos < threshold2)  {//decrease toggleMin to a new value if togglePos goes smaller
       if (togglePos < toggleMin) {
@@ -433,90 +414,46 @@ void intensityMode(){
       //2000/fHold1 (in millisecond) represents the duration that is 2 full cycles of vibration based on the input frequency
     }
 
-
-
-
     if (togglePos > threshold2 && togglePos < threshold1) { //reset function: when toggle moves back within the thresholds, reset
       vh.vibrate(fHold1, intHold1, 2000 / fHold1, dutyCycle, 0, 0); // vibration output when toggle switch reset
-      //2000/fHold1 (in millisecond) represents the duration that is 2 full cycles of vibration based on the input frequency
       intHold2 = intHold1;
 
       threshold1 = rockerMid + thresholdPercentage * (rockerHigh - rockerMid); //the threshold values that triggers the increment in fTransient
       threshold2 = rockerMid - thresholdPercentage * (rockerMid - rockerLow); //the threshold values that triggers the decrement in fTransient
-
       toggleMax = threshold1;//reset toggleMax and toggleMin back to thresholds
       toggleMin = threshold2;
-      // Serial.println(fTransient);
     }
-    Serial.println(fHold1);
-    Serial.println(intHold1);
 
-    /////////////////////////////////////////
-    upperRange = rockerHigh - rockerMid;//stores updated upper and lower range into the memory so next time the latest value is being read
-    lowerRange = rockerMid - rockerLow;
-    preferences.begin("toggleRange", false);
-    preferences.putInt("upperRange", upperRange);
-    preferences.putInt("lowerRange", lowerRange);
-    preferences.end();
-
-    //MOTOR TURN OFF FUNCTION: when button pushed during main function running, the motor turns off
-    if (buttonState == LOW && buttonPressed == false) {
-      buttonTimer = millis();
-      buttonPressed = true;
-      sleepTimerStart = true;
-      lastDeviceOn = true;
-    }
-    if (sleepTimerStart == true && buttonPressed == true) {
-      if (buttonState == LOW && millis() - buttonTimer > buttonHoldDur) {
-        deviceOn = false;
-        fHold1 = 0.5 * (fMax + fMin);//when device is turned off using the button, the frequency returns back to mid point the next time it turns on
-        sleepTimerStart = false;
-        freqSweepMode = false;//always have freqSweepMode set to false while turning off, so that it turns on with the same mode everytime
-        modeBeeped = false;
-        delay(50);
-      }
-    }
+    storeRange();
+    buttonMode();
 }
 
 void loop(){
   buttonState = digitalRead(buttonPin);
 
-  //device off + button detected and released + put into deep sleep
-  if (deviceOn == false && buttonState == HIGH) {
-    deepSleep();
-  }
-
   //detecting if device is turning on (aka: button pressed for 700ms) + calibrate rocker
-  if (buttonState == LOW && buttonPressed == false && deviceOn == false) {
+  if (buttonState == LOW && buttonPressed == false) {
     buttonPressed = true;
     buttonTimer = millis();
 
     //wait until button is released
-    while (buttonState != HIGH) {buttonState = digitalRead(buttonPin);}
-    buttonPressed = false;
-    if (millis() - buttonTimer >= buttonHoldDur){ 
-      deviceOn = true;
-      turnPinOn();
-      delay(50);
-      rockerCalibration();
-    }
-  }
-
-  //////Button reset function: when button is released from any condition, set parameters so it's ready for next press//////
-  if (buttonPressed == true && buttonState == HIGH) { //when the button is released after device turned on, revert buttonPressed to false
-    buttonPressed = false;
-    if (deviceOn == true) {
-      sleepTimerStart = false;
-      if (lastDeviceOn == true) {//do not perform when turning on the device
-        freqSweepMode = !freqSweepMode;//invert sweep mode to perform mode switch function;//when device is being turned on, mode is always set to intensity sweep, and this inverts it back to frequency sweep
-        modeBeeped = false; //revert modeBeep indicator to false so there's always a beep being performed when mode is being switched
+    while (buttonState != HIGH) {
+      if (millis() - buttonTimer > buttonHoldDur){ 
+        deviceOn = true;
+        turnPinOn();
+        delay(50);
+        rockerCalibration();
       }
+      buttonState = digitalRead(buttonPin);
+    } 
+    if (millis() - buttonTimer < buttonHoldDur){
+      deepSleep();
     }
+    buttonPressed = false;
   }
-
-  rockerVal = myMag1.getMeasurementZ();// raw mag reading
 
   if (deviceOn == true){
+    rockerVal = myMag1.getMeasurementZ();// raw mag reading 
     if(freqSweepMode){
       freqMode();
     }
