@@ -27,17 +27,13 @@ int currentX1 = 0;
 int currentY1 = 0;
 int currentZ1 = 0;
 
-int rockerVal; //the raw reading from mag
 int rockerHigh; //the upper limit value that the rocker switch reads (neutral at 27224)
 int rockerLow;//the lower limit value that the rocker switch reads
 int rockerMid;
 int togglePos = 0.0;
-int buttonState; 
-//the frequency value that the rocker toggles to;it's a averaged value based on rockerVal
-//it should be between rockerHigh and rockerLow
-
 int toggleMax;//the local max value to temporarily store max mag reading
 int toggleMin;//the local min value to temporarily store max mag reading
+
 float fMax = 300;
 float fMin = 40;
 float fHold1 = 0.5 * (fMax + fMin); //holds the local max/min frequency toggled by fTransient
@@ -51,23 +47,21 @@ float intHold2 = intHold1;
 float intTransient = intHold1;
 
 int calibrationVal; //the raw mag reading everytime the motor turns on (while the rocker is at neutral)
-const int buttonPin = 4;
 bool deviceOn = false; //indicates if the device is currently on
 bool lastDeviceOn = false;//indicates the last device status when the button is being released (to avoid mode switch during launching)
+
+const int buttonPin = 4;
 bool buttonPressed = false;
 unsigned long buttonTimer = 0;
 int buttonHoldDur = 700;
-bool sleepTimerStart = false;//determines if the sleep(turn off) timer has started; reset when button is released
+int buttonState; 
+
 bool freqSweepMode = true;//determines current mode: true = frequency sweep, false = intensity sweep
 bool modeBeeped = true;//indicates if the mode indication beep has been performed (once)
 
 float dutyCycle = 0.5;
-float intensity = 1;
-
-int threshold1;
-int threshold2;//the threshold values that triggers the increase/decrease in fTransient
-
 float thresholdPercentage = 0.12;
+
 //Auto Calibration Function Parameters
 #define BUFFER_SIZE 5
 CircularBuffer<int, BUFFER_SIZE> buffer1;//buffer array for rockerLow averaging
@@ -85,7 +79,6 @@ int lowerRange;
 
 //DEEP SLEEP/////////
 #include "driver/rtc_io.h"
-
 #define BUTTON_PIN_BITMASK 0x200000000 // 2^33 in hex
 
 void setup(){
@@ -199,7 +192,6 @@ float map(float x, float in_min, float in_max, float out_min, float out_max){
 
 void deepSleep(){
   fHold1 = 0.5 * (fMax + fMin);//when device is turned off using the button, the frequency returns back to mid point the next time it turns on
-  sleepTimerStart = false;
   freqSweepMode = false;//always have freqSweepMode set to false while turning off, so that it turns on with the same mode everytime
   modeBeeped = false;
   delay(50);
@@ -245,18 +237,35 @@ void turnPinOn(){
 }
 
 void buttonMode(){
-  if (buttonState == LOW && buttonPressed == false) {
-    buttonTimer = millis();
-    buttonPressed = true;
-    sleepTimerStart = true;
-
+  buttonTimer = millis();
+  buttonPressed = true;
+  if (deviceOn == true) { //if device on; either switch mode or go to sleep
     while(buttonState != HIGH){ //not released  
       if (millis() - buttonTimer > buttonHoldDur){ //Go to deepsleep
+        Serial.println("In DEEP SLEEP MODE");
         deepSleep();
       }
       buttonState =  digitalRead(buttonPin);
     }
+    freqSweepMode = !freqSweepMode;
   }
+  else{ //device is off; want to turn it on
+    //wait until button is released
+    while (buttonState != HIGH) {
+      if (millis() - buttonTimer > buttonHoldDur){ 
+        deviceOn = true;
+        turnPinOn();
+        delay(50);
+        rockerCalibration();
+      }
+      buttonState = digitalRead(buttonPin);
+    } 
+    if (millis() - buttonTimer < buttonHoldDur){
+      deepSleep();
+    }
+  }
+  
+  buttonPressed = false;
 }
 
 void rockerCalibration(){
@@ -269,10 +278,9 @@ void rockerCalibration(){
     buffer2.push(rockerHigh);
     rockerHighAvg = rockerHigh;
     rockerLowAvg = rockerLow;
-    threshold1 = rockerMid + thresholdPercentage * (rockerHigh - rockerMid); //the threshold values that triggers the increment in fTransient
-    threshold2 = rockerMid - thresholdPercentage * (rockerMid - rockerLow); //the threshold values that triggers the decrement in fTransient
-    toggleMax = threshold1; //set initial toggle max value at threshold1
-    toggleMin = threshold2; //set initial toggle min value at threshold2
+    toggleMax = rockerMid + thresholdPercentage * (rockerHigh - rockerMid); //the threshold values that triggers the increment in fTransient
+    toggleMin = rockerMid - thresholdPercentage * (rockerMid - rockerLow); //the threshold values that triggers the decrement in fTransient
+
 }
 
 void modeSwitchBeep(){
@@ -301,45 +309,24 @@ void storeRange(){
 
 void freqMode(){
     modeSwitchBeep();
-    togglePos = rockerVal;
-    //now we have a buffered mag reading named as togglePos, which is the main input in the following code
 
-    if (togglePos > threshold1)  { //linearly increase toggleMax to a new value if togglePos goes larger
-      if (togglePos > toggleMax) {
-        toggleMax = togglePos;
-        fTransient = map(toggleMax, threshold1, rockerHigh, fHold2, fMax);
-        if (fTransient > fMax) {
-          fTransient = fMax;
-        }
-        //fHold1 = exp((fTransient + 176.2951) / 81.0085); //set new fHold1 position to the recent fTransient
-        fHold1 = 0.00345 * sq(fTransient) + 9.66;//curve equation to replace the linear mapping
-      }
-      if (fHold1 > fMax) {
-        fHold1 = fMax;
-      }
-      vh.vibrate(fHold1, intHold1, 2000 / fHold1, dutyCycle, 0, 0); //vibrate using the recent fHold1 value
+    if (togglePos > toggleMax)  { //linearly increase toggleMax to a new value if togglePos goes larger
+      Serial.println("F: toggleMax"); 
+      toggleMax = togglePos;
+      fTransient = map(toggleMax, toggleMax, rockerHigh, fHold2, fMax) > fMax? fMax: fTransient;
+      fHold1 = (0.00345 * sq(fTransient) + 9.66) > fMax ? fMax: fHold1;//curve equation to replace the linear mapping
       //2000/fHold1 (in millisecond) represents the duration that is 2 full cycles of vibration based on the input frequency
-    }
-
-
-    if (togglePos < threshold2)  {//decrease toggleMin to a new value if togglePos goes smaller
-      if (togglePos < toggleMin) {
-        toggleMin = togglePos;
-        fTransient = map(toggleMin, threshold2, rockerLow, fHold2, fMin);
-        if (fTransient < fMin) {
-          fTransient = fMin;
-        }
-        //fHold1 = exp((fTransient + 176.2951) / 81.0085); //set new fHold1 position to the recent fTransient
-        fHold1 = 0.00345 * sq(fTransient) + 9.66;//curve equation to replace the linear mapping
-      }
-      if (fHold1 < fMin) {
-        fHold1 = fMin;
-      }
       vh.vibrate(fHold1, intHold1, 2000 / fHold1, dutyCycle, 0, 0); //vibrate using the recent fHold1 value
-      //2000/fHold1 (in millisecond) represents the duration that is 2 full cycles of vibration based on the input frequency
     }
-
-    if (togglePos > threshold2 && togglePos < threshold1) { //reset function: when toggle moves back within the thresholds, reset
+    else if (togglePos < toggleMin)  {//decrease toggleMin to a new value if togglePos goes smaller
+      Serial.println("F: toggleMin"); 
+      toggleMin = togglePos;
+      fTransient = map(toggleMin, toggleMin, rockerLow, fHold2, fMin) < fMin ?  fMin: fTransient;
+      fHold1 = (0.00345 * sq(fTransient) + 9.66) < fMin ? fMin: fHold1;//curve equation to replace the linear mapping
+      vh.vibrate(fHold1, intHold1, 2000 / fHold1, dutyCycle, 0, 0); //vibrate using the recent fHold1 value
+    }
+    else if (togglePos > toggleMin && togglePos < toggleMax) { //reset function: when toggle moves back within the thresholds, reset
+      Serial.println("F: In Between Values"); 
       vh.vibrate(fHold1, intHold1, 2000 / fHold1, dutyCycle, 0, 0); // vibration output when toggle switch reset
       fHold2 = sqrt((fHold1 - 9.66) / 0.00345);//curve equation (reset) to replace the linear mapping
       if (toggleMax > rockerHighAvg && pushCounterHigh <= pushCounterLimit) { //push new max value to rockerHigh buffer if it is higher than average
@@ -348,112 +335,72 @@ void freqMode(){
         rockerHigh = rockerHighAvg;
         pushCounterHigh = pushCounterHigh + 1;
       }
-      if (pushCounterHigh > pushCounterLimit && toggleMax > rockerMid + 0.95 * (rockerHigh - rockerMid)) { //after pushCounterLimit times, only push value within 95%
+      else if (pushCounterHigh > pushCounterLimit && toggleMax > rockerMid + 0.95 * (rockerHigh - rockerMid)) { //after pushCounterLimit times, only push value within 95%
         buffer2.push(toggleMax);
         rockerHighAvg = calculateAverage(buffer2);
         rockerHigh = rockerHighAvg;
       }
+
       if (toggleMin < rockerLowAvg &&  pushCounterLow <= pushCounterLimit) {//push new min value to rockerLow buffer if it is lower than average
         buffer1.push(toggleMin);
         rockerLowAvg = calculateAverage(buffer1);
         rockerLow = rockerLowAvg;
         pushCounterLow = pushCounterLow + 1;
       }
-      if (pushCounterHigh > pushCounterLimit && toggleMin < rockerMid - 0.95 * (rockerMid - rockerLow)) {//after pushCounterLimit times, only push value within 95%
+      else if (pushCounterHigh > pushCounterLimit && toggleMin < rockerMid - 0.95 * (rockerMid - rockerLow)) {//after pushCounterLimit times, only push value within 95%
         buffer1.push(toggleMin);
         rockerLowAvg = calculateAverage(buffer1);
         rockerLow = rockerLowAvg;
       }
 
-      threshold1 = rockerMid + thresholdPercentage * (rockerHigh - rockerMid); //the threshold values that triggers the increment in fTransient
-      threshold2 = rockerMid - thresholdPercentage * (rockerMid - rockerLow); //the threshold values that triggers the decrement in fTransient
-      toggleMax = threshold1;//reset toggleMax and toggleMin back to thresholds
-      toggleMin = threshold2;
     }
 
+    toggleMax = rockerMid + thresholdPercentage * (rockerHigh - rockerMid); //the threshold values that triggers the increment in fTransient
+    toggleMin = rockerMid - thresholdPercentage * (rockerMid - rockerLow); //the threshold values that triggers the decrement in fTransient
     storeRange();
-    buttonMode();
 
 }
 
 void intensityMode(){
     modeSwitchBeep();
-    togglePos = rockerVal;
 
-    if (togglePos > threshold1)  { //linearly increase toggleMax to a new value if togglePos goes larger
-      if (togglePos > toggleMax) {
-        toggleMax = togglePos;
-        intTransient = map(toggleMax, threshold1, rockerHigh, intHold2, intMin);
-        if (intTransient < intMin) {
-          intTransient = intMin;
-        }
-        intHold1 = intTransient;
-      }
-      if (intHold1 < intMin) {
-        intHold1 = intMin;
-      }
-
+    if (togglePos > toggleMax){ //linearly increase toggleMax to a new value if togglePos goes larger
+      Serial.println("I: toggleMax"); 
+      toggleMax = togglePos;
+      intTransient = map(toggleMax, toggleMax, rockerHigh, intHold2, intMin) < intMin ?intMin: intTransient;
+      intHold1 = intTransient  < intMin ? intMin : intTransient;
+      //2000/fHold1 (in millisecond) represents the duration that is 2 full cycles of vibration based on the input frequency
       vh.vibrate(fHold1, intHold1, 2000 / fHold1, dutyCycle, 0, 0); //vibrate using the recent fHold1 value
-      //2000/fHold1 (in millisecond) represents the duration that is 2 full cycles of vibration based on the input frequency
     }
-
-    if (togglePos < threshold2)  {//decrease toggleMin to a new value if togglePos goes smaller
-      if (togglePos < toggleMin) {
-        toggleMin = togglePos;
-        intTransient = map(toggleMin, threshold2, rockerLow, intHold2, intMax);
-        if (intTransient  > intMax) {
-          intTransient = intMax;
-        }
-
-        intHold1 = intTransient;
-      }
-      if (intHold1 > intMax) {
-        intHold1 = intMax;
-      }
-      vh.vibrate(fHold1, intHold1, 2000 / fHold1, dutyCycle, 0, 0); //vibrate using the recent intHold1 value
-      //2000/fHold1 (in millisecond) represents the duration that is 2 full cycles of vibration based on the input frequency
+    else if (togglePos < toggleMin){//decrease toggleMin to a new value if togglePos goes smaller
+      Serial.println("I: toggleMin"); 
+      toggleMin = togglePos;
+      intTransient = map(toggleMin, toggleMin, rockerLow, intHold2, intMax > intMax ? intMax : intTransient);
+      intHold1 = intTransient > intMax ? intMax : intTransient;
+      vh.vibrate(fHold1, intHold1, 2000 / fHold1, dutyCycle, 0, 0); //vibrate using the recent intHold1 value   
     }
-
-    if (togglePos > threshold2 && togglePos < threshold1) { //reset function: when toggle moves back within the thresholds, reset
+    else if (togglePos > toggleMin && togglePos < toggleMax) { //reset function: when toggle moves back within the thresholds, reset
+      Serial.println("I: In Between Values"); 
       vh.vibrate(fHold1, intHold1, 2000 / fHold1, dutyCycle, 0, 0); // vibration output when toggle switch reset
       intHold2 = intHold1;
 
-      threshold1 = rockerMid + thresholdPercentage * (rockerHigh - rockerMid); //the threshold values that triggers the increment in fTransient
-      threshold2 = rockerMid - thresholdPercentage * (rockerMid - rockerLow); //the threshold values that triggers the decrement in fTransient
-      toggleMax = threshold1;//reset toggleMax and toggleMin back to thresholds
-      toggleMin = threshold2;
     }
-
+    
+    toggleMax = rockerMid + thresholdPercentage * (rockerHigh - rockerMid); //the threshold values that triggers the increment in fTransient
+    toggleMin = rockerMid - thresholdPercentage * (rockerMid - rockerLow); //the threshold values that triggers the decrement in fTransient
     storeRange();
-    buttonMode();
+    
 }
 
 void loop(){
   buttonState = digitalRead(buttonPin);
-
-  //detecting if device is turning on (aka: button pressed for 700ms) + calibrate rocker
-  if (buttonState == LOW && buttonPressed == false) {
-    buttonPressed = true;
-    buttonTimer = millis();
-
-    //wait until button is released
-    while (buttonState != HIGH) {
-      if (millis() - buttonTimer > buttonHoldDur){ 
-        deviceOn = true;
-        turnPinOn();
-        delay(50);
-        rockerCalibration();
-      }
-      buttonState = digitalRead(buttonPin);
-    } 
-    if (millis() - buttonTimer < buttonHoldDur){
-      deepSleep();
-    }
-    buttonPressed = false;
+  
+  if (buttonState == LOW && buttonPressed == false){//button pressed detected
+    buttonMode();  
   }
-
+  
   if (deviceOn == true){
-    rockerVal = myMag1.getMeasurementZ();// raw mag reading 
+    togglePos = myMag1.getMeasurementZ();// raw mag reading 
     if(freqSweepMode){
       freqMode();
     }
