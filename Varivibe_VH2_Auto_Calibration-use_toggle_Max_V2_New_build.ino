@@ -77,8 +77,8 @@ int pushCounterLimit = 10;
 int upperRange;//the permanent range value -distance between rockerMid and rockerHigh/rockerLow
 int lowerRange;
 
-int threshold1;
-int threshold2;//the threshold values that triggers the increase/decrease in fTransient
+int incThres;
+int decThres;//the threshold values that triggers the increase/decrease in fTransient
 //DEEP SLEEP/////////
 #include "driver/rtc_io.h"
 #define BUTTON_PIN_BITMASK 0x200000000 // 2^33 in hex
@@ -152,10 +152,7 @@ void setup(){
 
   // For more info about deep sleep: https://randomnerdtutorials.com/esp32-external-wake-up-deep-sleep/
   print_wakeup_reason(); //Print the wakeup reason for ESP32
-
-//-------------------THIS NEEDS TO BE CHECKED IF ITS NEEDED!!----------------------------- if yes, remove the if - endif
   turnPinOff();
-//-------------------THIS NEEDS TO BE CHECKED IF ITS NEEDED!!----------------------------- if yes, remove the if - endif
   esp_sleep_enable_ext0_wakeup(GPIO_NUM_4, 0); //1 = High, 0 = Low
 }
 
@@ -189,34 +186,34 @@ void print_wakeup_reason() {
 
 //Re-maps a number from one range to another
 float map(float x, float in_min, float in_max, float out_min, float out_max){
-  return (x - in_min) * (out_max - out_min) / (in_max - in_min) + out_min;
+    return (x - in_min) * (out_max - out_min) / (in_max - in_min) + out_min;
 }
 
 void deepSleep(){
-  fHold1 = 0.5 * (fMax + fMin);//when device is turned off using the button, the frequency returns back to mid point the next time it turns on
-  freqSweepMode = false;//always have freqSweepMode set to false while turning off, so that it turns on with the same mode everytime
-  modeBeeped = false;
-  delay(50);
-  myMag1.disableYZChannels();//disable YZ channels to save power while esp goes to sleep 
-  Serial.println(myMag1.areYZChannelsEnabled());
-  Serial.println("Going to sleep now");
-  esp_deep_sleep_start(); //put into deep sleep
+    fHold1 = 0.5 * (fMax + fMin);//when device is turned off using the button, the frequency returns back to mid point the next time it turns on
+    freqSweepMode = false;//always have freqSweepMode set to false while turning off, so that it turns on with the same mode everytime
+    modeBeeped = false;
+    delay(50);
+    myMag1.disableYZChannels();//disable YZ channels to save power while esp goes to sleep 
+    Serial.println(myMag1.areYZChannelsEnabled());
+    Serial.println("Going to sleep now");
+    esp_deep_sleep_start(); //put into deep sleep
 }
 
 void turnPinOff(){
-  Serial.println("Disable motor and haptic drivers");
-  digitalWrite(32, LOW); //driver sleep pin
-  digitalWrite(15, LOW);
-  // Make sure the LEDs are off
-  digitalWrite(13, LOW); //RED
-  digitalWrite(14, LOW); //GREEN
-  digitalWrite(2, LOW); //YELLOW
-
-  gpio_hold_en((gpio_num_t) 15);
-  gpio_hold_en((gpio_num_t) 32);
-  gpio_hold_en((gpio_num_t) 13);
-  gpio_hold_en((gpio_num_t) 14);
-  gpio_hold_en((gpio_num_t) 2);
+    Serial.println("Disable motor and haptic drivers");
+    digitalWrite(32, LOW); //driver sleep pin
+    digitalWrite(15, LOW);
+    // Make sure the LEDs are off
+    digitalWrite(13, LOW); //RED
+    digitalWrite(14, LOW); //GREEN
+    digitalWrite(2, LOW); //YELLOW
+  
+    gpio_hold_en((gpio_num_t) 15);
+    gpio_hold_en((gpio_num_t) 32);
+    gpio_hold_en((gpio_num_t) 13);
+    gpio_hold_en((gpio_num_t) 14);
+    gpio_hold_en((gpio_num_t) 2);
 }
 
 void turnPinOn(){
@@ -233,9 +230,6 @@ void turnPinOn(){
     digitalWrite(14, HIGH); //green
     digitalWrite(2, HIGH); //yellow
 
-    //enable magnotometer
-    myMag1.enableYZChannels();
-    Serial.println(myMag1.areYZChannelsEnabled());
 }
 
 void buttonMode(){
@@ -257,6 +251,7 @@ void buttonMode(){
       if (millis() - buttonTimer > buttonHoldDur){ 
         deviceOn = true;
         turnPinOn();
+        myMag1.enableYZChannels();//enable magnotometer
         delay(50);
         rockerCalibration();
       }
@@ -266,7 +261,6 @@ void buttonMode(){
       deepSleep();
     }
   }
-  
   buttonPressed = false;
 }
 
@@ -284,27 +278,23 @@ void rockerCalibration(){
 }
 
 void thresholdAssign(){
-    threshold1 = rockerMid + thresholdPercentage * (rockerHigh - rockerMid); //the threshold values that triggers the increment in fTransient
-    threshold2 = rockerMid - thresholdPercentage * (rockerMid - rockerLow); //the threshold values that triggers the decrement in fTransient
-    toggleMax = threshold1; //set initial toggle max value at threshold1
-    toggleMin = threshold2; //set initial toggle min value at threshold2
+    incThres = rockerMid + thresholdPercentage * (rockerHigh - rockerMid); //the threshold values that triggers the increment in fTransient
+    decThres = rockerMid - thresholdPercentage * (rockerMid - rockerLow); //the threshold values that triggers the decrement in fTransient
+    toggleMax = incThres; //set initial toggle max value at incThres
+    toggleMin = decThres; //set initial toggle min value at decThres
 }
+
 void modeSwitchBeep(){
   if (modeBeeped == false) {      //beeping indicating the mode
-
     for (int i = 40; i < 300; i = i + 30) {
       vh.vibrate(i, 0.5, 2000 / i, dutyCycle, 0, 0);
     }
-  
     modeBeeped = true;
     delay(190);
   }
 }
 
 void storeRange(){
-//    Serial.println(fHold1);
-//    Serial.println(intHold1);
-
     upperRange = rockerHigh - rockerMid;//stores updated upper and lower range into the memory so next time the latest value is being read
     lowerRange = rockerMid - rockerLow;
     preferences.begin("toggleRange", false);
@@ -316,12 +306,11 @@ void storeRange(){
 
 void freqMode(){
     modeSwitchBeep();
-
-    if (togglePos > threshold1)  { //linearly increase toggleMax to a new value if togglePos goes larger
+    if (togglePos > incThres)  { //linearly increase toggleMax to a new value if togglePos goes larger
       Serial.println("F: toggleMax");
       if (togglePos > toggleMax) {
         toggleMax = togglePos;
-        fTransient = map(toggleMax, threshold1, rockerHigh, fHold2, fMax);
+        fTransient = map(toggleMax, incThres, rockerHigh, fHold2, fMax);
         fTransient =  fTransient > fMax? fMax: fTransient;
         Serial.println(fTransient);
         fHold1 = (0.00345 * sq(fTransient) + 9.66);
@@ -330,11 +319,11 @@ void freqMode(){
       //2000/fHold1 (in millisecond) represents the duration that is 2 full cycles of vibration based on the input frequency
       vh.vibrate(fHold1, intHold1, 2000 / fHold1, dutyCycle, 0, 0); //vibrate using the recent fHold1 value
     }
-    else if (togglePos < threshold2)  {//decrease toggleMin to a new value if togglePos goes smaller
+    else if (togglePos < decThres)  {//decrease toggleMin to a new value if togglePos goes smaller
       Serial.println("F: toggleMin"); 
       if (togglePos < toggleMin) {
         toggleMin = togglePos;
-        fTransient = map(toggleMin, threshold2, rockerLow, fHold2, fMin) ;
+        fTransient = map(toggleMin, decThres, rockerLow, fHold2, fMin) ;
         fTransient = fTransient < fMin ?  fMin: fTransient;
         Serial.println(fTransient);
         fHold1 = (0.00345 * sq(fTransient) + 9.66);
@@ -342,7 +331,7 @@ void freqMode(){
       fHold1 = fHold1 < fMin ? fMin: fHold1;//curve equation to replace the linear mapping
       vh.vibrate(fHold1, intHold1, 2000 / fHold1, dutyCycle, 0, 0); //vibrate using the recent fHold1 value
     }
-    else if (togglePos > threshold2 && togglePos < threshold1) { //reset function: when toggle moves back within the thresholds, reset
+    else if (togglePos > decThres && togglePos < incThres) { //reset function: when toggle moves back within the thresholds, reset
       Serial.println("F: In Between Values"); 
       vh.vibrate(fHold1, intHold1, 2000 / fHold1, dutyCycle, 0, 0); // vibration output when toggle switch reset
       fHold2 = sqrt((fHold1 - 9.66) / 0.00345);//curve equation (reset) to replace the linear mapping
@@ -372,55 +361,49 @@ void freqMode(){
       
       thresholdAssign();
     }
-
 }
 
 void intensityMode(){
     modeSwitchBeep();
-
-    if (togglePos > threshold1){ //linearly increase toggleMax to a new value if togglePos goes larger
+    if (togglePos > incThres){ //linearly increase toggleMax to a new value if togglePos goes larger
       Serial.println("I: toggleMax"); 
       if (togglePos > toggleMax) {
         toggleMax = togglePos;
-        intTransient = map(toggleMax, threshold1, rockerHigh, intHold2, intMin) ;
+        intTransient = map(toggleMax, incThres, rockerHigh, intHold2, intMin) ;
         intTransient = intTransient > intMax ? intMax: intTransient;
       }
       intHold1 = intTransient  > intMax ? intMax : intTransient;
       //2000/fHold1 (in millisecond) represents the duration that is 2 full cycles of vibration based on the input frequency
       vh.vibrate(fHold1, intHold1, 2000 / fHold1, dutyCycle, 0, 0); //vibrate using the recent fHold1 value
     }
-    else if (togglePos < threshold2){//decrease toggleMin to a new value if togglePos goes smaller
+    else if (togglePos < decThres){//decrease toggleMin to a new value if togglePos goes smaller
       Serial.println("I: toggleMin"); 
       if (togglePos < toggleMin) {
         toggleMin = togglePos;
-        intTransient = map(toggleMin, threshold2, rockerLow, intHold2, intMax);
+        intTransient = map(toggleMin, decThres, rockerLow, intHold2, intMax);
         intTransient = intTransient < intMin ? intMin : intTransient;
       }
       intHold1 = intTransient > intMax ? intMax : intTransient;
       vh.vibrate(fHold1, intHold1, 2000 / fHold1, dutyCycle, 0, 0); //vibrate using the recent intHold1 value   
     }
-    else if (togglePos > threshold2 && togglePos < threshold1) { //reset function: when toggle moves back within the thresholds, reset
+    else if (togglePos > decThres && togglePos < incThres) { //reset function: when toggle moves back within the thresholds, reset
       Serial.println("I: In Between Values"); 
       vh.vibrate(fHold1, intHold1, 2000 / fHold1, dutyCycle, 0, 0); // vibration output when toggle switch reset
       intHold2 = intHold1;
       thresholdAssign();
     }
-
-    
 }
 
 void loop(){
   buttonState = digitalRead(buttonPin);
-  
+
   if (buttonState == LOW && buttonPressed == false){//button pressed detected
     buttonMode();  
   }
   
   if (deviceOn == true){
     togglePos = myMag1.getMeasurementZ();// raw mag reading 
-    //Serial.println(togglePos);
     if(freqSweepMode){
-      //freqModeZeli();
       freqMode();
     }
     else{
@@ -429,4 +412,3 @@ void loop(){
     storeRange();
   }
 }
-
