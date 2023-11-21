@@ -52,6 +52,7 @@ bool deviceOn = false; //indicates if the device is currently on
 const int buttonPin = 4;
 bool buttonPressed = false;
 unsigned long buttonTimer = 0;
+unsigned long sleepTimer = 0;
 int buttonHoldDur = 700;
 int buttonState; 
 
@@ -140,11 +141,6 @@ void setup(){
   Serial.begin(115200);
   Wire.begin();
 
-  buttonState = digitalRead(buttonPin);
-  while(buttonState == LOW){
-    Serial.println("IN SETUP");
-    buttonState = digitalRead(buttonPin);
-  }
   myMag1.begin();
   if (myMag1.begin() == false){
     Serial.println("MMC5983MA did not respond - check your wiring. Freezing.");
@@ -157,7 +153,6 @@ void setup(){
 
   // For more info about deep sleep: https://randomnerdtutorials.com/esp32-external-wake-up-deep-sleep/
   print_wakeup_reason(); //Print the wakeup reason for ESP32
-  turnPinOff();
   esp_sleep_enable_ext0_wakeup(GPIO_NUM_4, 0); //1 = High, 0 = Low
 }
 
@@ -204,6 +199,10 @@ void deepSleep(){
     myMag1.disableYZChannels();//disable YZ channels to save power while esp goes to sleep 
     Serial.println(myMag1.areYZChannelsEnabled());
     Serial.println("Going to sleep now");
+    turnPinOff();
+    while(buttonState == LOW && millis()- sleepTimer < 15000){
+      buttonState =  digitalRead(buttonPin);
+    }
     esp_deep_sleep_start(); //put into deep sleep
 }
 
@@ -259,6 +258,7 @@ void buttonMode(){
       else{intensityMode();}
       if (millis() - buttonTimer > buttonHoldDur){ //Go to deepsleep
         Serial.println("In DEEP SLEEP MODE");
+        sleepTimer = millis();
         deepSleep();
       }
       buttonState =  digitalRead(buttonPin);
