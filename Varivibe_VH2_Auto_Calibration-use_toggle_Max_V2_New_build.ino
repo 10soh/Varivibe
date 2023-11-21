@@ -244,6 +244,7 @@ void rampDown(){
     for (int i = 200; i > 0; i -= 30) {
       vh.vibrate(i, 0.5, 2000 / i, dutyCycle, 0, 0);
     }
+    vh.pause(150);
     vh.pulse(300, 12);
   }
 }
