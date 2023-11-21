@@ -48,7 +48,6 @@ float intTransient = intHold1;
 
 int calibrationVal; //the raw mag reading everytime the motor turns on (while the rocker is at neutral)
 bool deviceOn = false; //indicates if the device is currently on
-bool lastDeviceOn = false;//indicates the last device status when the button is being released (to avoid mode switch during launching)
 
 const int buttonPin = 4;
 bool buttonPressed = false;
@@ -79,6 +78,7 @@ int lowerRange;
 
 int incThres;
 int decThres;//the threshold values that triggers the increase/decrease in fTransient
+
 //DEEP SLEEP/////////
 #include "driver/rtc_io.h"
 #define BUTTON_PIN_BITMASK 0x200000000 // 2^33 in hex
@@ -140,6 +140,11 @@ void setup(){
   Serial.begin(115200);
   Wire.begin();
 
+  buttonState = digitalRead(buttonPin);
+  while(buttonState == LOW){
+    Serial.println("IN SETUP");
+    buttonState = digitalRead(buttonPin);
+  }
   myMag1.begin();
   if (myMag1.begin() == false){
     Serial.println("MMC5983MA did not respond - check your wiring. Freezing.");
@@ -190,6 +195,8 @@ float map(float x, float in_min, float in_max, float out_min, float out_max){
 }
 
 void deepSleep(){
+    rampDown();
+    deviceOn = false;
     fHold1 = 0.5 * (fMax + fMin);//when device is turned off using the button, the frequency returns back to mid point the next time it turns on
     freqSweepMode = false;//always have freqSweepMode set to false while turning off, so that it turns on with the same mode everytime
     modeBeeped = false;
@@ -232,11 +239,23 @@ void turnPinOn(){
 
 }
 
+void rampDown(){
+  if (deviceOn == true){
+    for (int i = 200; i > 0; i -= 30) {
+      vh.vibrate(i, 0.5, 2000 / i, dutyCycle, 0, 0);
+    }
+    vh.pulse(300, 12);
+  }
+}
+
 void buttonMode(){
   buttonTimer = millis();
   buttonPressed = true;
   if (deviceOn == true) { //if device on; either switch mode or go to sleep
-    while(buttonState != HIGH){ //not released  
+     Serial.println("22222222222222222222");
+    while(buttonState != HIGH){ //not released 
+      if(freqSweepMode){freqMode();}
+      else{intensityMode();}
       if (millis() - buttonTimer > buttonHoldDur){ //Go to deepsleep
         Serial.println("In DEEP SLEEP MODE");
         deepSleep();
@@ -244,9 +263,12 @@ void buttonMode(){
       buttonState =  digitalRead(buttonPin);
     }
     freqSweepMode = !freqSweepMode;
+    modeBeeped = false;
+    buttonPressed = false;
   }
   else{ //device is off; want to turn it on
     //wait until button is released
+     Serial.println("3333333333333333333333333");
     while (buttonState != HIGH) {
       if (millis() - buttonTimer > buttonHoldDur){ 
         deviceOn = true;
@@ -254,14 +276,11 @@ void buttonMode(){
         myMag1.enableYZChannels();//enable magnotometer
         delay(50);
         rockerCalibration();
+        break;
       }
       buttonState = digitalRead(buttonPin);
-    } 
-    if (millis() - buttonTimer < buttonHoldDur){
-      deepSleep();
     }
   }
-  buttonPressed = false;
 }
 
 void rockerCalibration(){
@@ -285,11 +304,19 @@ void thresholdAssign(){
 }
 
 void modeSwitchBeep(){
-  if (modeBeeped == false) {      //beeping indicating the mode
+  if (modeBeeped == false && freqSweepMode) {      //beeping indicating the mode
     for (int i = 40; i < 300; i = i + 30) {
       vh.vibrate(i, 0.5, 2000 / i, dutyCycle, 0, 0);
     }
-    modeBeeped = true;
+      modeBeeped = true;
+      delay(190);
+  }
+  else if (modeBeeped == false && !freqSweepMode) {    
+    delay(50);
+    vh.vibrate(100, 0.5, 80, dutyCycle, 0, 0);
+    delay(50);
+    vh.vibrate(100, 0.25, 80, dutyCycle, 0, 0);
+      modeBeeped = true;
     delay(190);
   }
 }
@@ -305,6 +332,7 @@ void storeRange(){
 
 
 void freqMode(){
+  
     modeSwitchBeep();
     if (togglePos > incThres)  { //linearly increase toggleMax to a new value if togglePos goes larger
       Serial.println("F: toggleMax");
@@ -361,6 +389,7 @@ void freqMode(){
       
       thresholdAssign();
     }
+    storeRange();
 }
 
 void intensityMode(){
@@ -392,13 +421,18 @@ void intensityMode(){
       intHold2 = intHold1;
       thresholdAssign();
     }
+    storeRange();
 }
 
 void loop(){
   buttonState = digitalRead(buttonPin);
 
   if (buttonState == LOW && buttonPressed == false){//button pressed detected
+    Serial.println("11111111111111111");
     buttonMode();  
+  }
+  else if(buttonState == HIGH && deviceOn){ //caused from opening
+    buttonPressed = false;
   }
   
   if (deviceOn == true){
@@ -409,6 +443,6 @@ void loop(){
     else{
       intensityMode();
     }
-    storeRange();
+    
   }
 }
