@@ -255,8 +255,9 @@ void buttonMode(){
   if (deviceOn == true) { //if device on; either switch mode or go to sleep
      Serial.println("22222222222222222222");
     while(buttonState != HIGH){ //not released 
-      if(freqSweepMode){freqMode();}
-      else{intensityMode();}
+      Serial.print("-------------------------fHOLD1: ");
+      Serial.println(fHold1);
+      vh.vibrate(fHold1, intHold1, 50, dutyCycle, 0, 0);
       if (millis() - buttonTimer > buttonHoldDur){ //Go to deepsleep
         Serial.println("In DEEP SLEEP MODE");
         sleepTimer = millis();
@@ -264,6 +265,7 @@ void buttonMode(){
       }
       buttonState =  digitalRead(buttonPin);
     }
+    modeSwitchBeep();
     freqSweepMode = !freqSweepMode;
     modeBeeped = false;
     buttonPressed = false;
@@ -334,8 +336,6 @@ void storeRange(){
 
 
 void freqMode(){
-  
-    modeSwitchBeep();
     if (togglePos > incThres)  { //linearly increase toggleMax to a new value if togglePos goes larger
       Serial.println("F: toggleMax");
       if (togglePos > toggleMax) {
@@ -347,7 +347,6 @@ void freqMode(){
       }
       fHold1 =  fHold1 > fMax ? fMax: fHold1;//curve equation to replace the linear mapping
       //2000/fHold1 (in millisecond) represents the duration that is 2 full cycles of vibration based on the input frequency
-      vh.vibrate(fHold1, intHold1, 2000 / fHold1, dutyCycle, 0, 0); //vibrate using the recent fHold1 value
     }
     else if (togglePos < decThres)  {//decrease toggleMin to a new value if togglePos goes smaller
       Serial.println("F: toggleMin"); 
@@ -359,11 +358,9 @@ void freqMode(){
         fHold1 = (0.00345 * sq(fTransient) + 9.66);
       }
       fHold1 = fHold1 < fMin ? fMin: fHold1;//curve equation to replace the linear mapping
-      vh.vibrate(fHold1, intHold1, 2000 / fHold1, dutyCycle, 0, 0); //vibrate using the recent fHold1 value
     }
     else if (togglePos > decThres && togglePos < incThres) { //reset function: when toggle moves back within the thresholds, reset
       Serial.println("F: In Between Values"); 
-      vh.vibrate(fHold1, intHold1, 2000 / fHold1, dutyCycle, 0, 0); // vibration output when toggle switch reset
       fHold2 = sqrt((fHold1 - 9.66) / 0.00345);//curve equation (reset) to replace the linear mapping
       if (toggleMax > rockerHighAvg && pushCounterHigh <= pushCounterLimit) { //push new max value to rockerHigh buffer if it is higher than average
         buffer2.push(toggleMax);
@@ -395,7 +392,6 @@ void freqMode(){
 }
 
 void intensityMode(){
-    modeSwitchBeep();
     if (togglePos > incThres){ //linearly increase toggleMax to a new value if togglePos goes larger
       Serial.println("I: toggleMax"); 
       if (togglePos > toggleMax) {
@@ -405,7 +401,6 @@ void intensityMode(){
       }
       intHold1 = intTransient  > intMax ? intMax : intTransient;
       //2000/fHold1 (in millisecond) represents the duration that is 2 full cycles of vibration based on the input frequency
-      vh.vibrate(fHold1, intHold1, 2000 / fHold1, dutyCycle, 0, 0); //vibrate using the recent fHold1 value
     }
     else if (togglePos < decThres){//decrease toggleMin to a new value if togglePos goes smaller
       Serial.println("I: toggleMin"); 
@@ -415,11 +410,9 @@ void intensityMode(){
         intTransient = intTransient < intMin ? intMin : intTransient;
       }
       intHold1 = intTransient > intMax ? intMax : intTransient;
-      vh.vibrate(fHold1, intHold1, 2000 / fHold1, dutyCycle, 0, 0); //vibrate using the recent intHold1 value   
     }
     else if (togglePos > decThres && togglePos < incThres) { //reset function: when toggle moves back within the thresholds, reset
       Serial.println("I: In Between Values"); 
-      vh.vibrate(fHold1, intHold1, 2000 / fHold1, dutyCycle, 0, 0); // vibration output when toggle switch reset
       intHold2 = intHold1;
       thresholdAssign();
     }
@@ -451,5 +444,8 @@ void loop(){
       Serial.println("55555555555555555555555");
       intensityMode();
     }
+    vh.vibrate(fHold1, intHold1, 25, dutyCycle, 0, 0);
+    Serial.print(">>>>>>>>>>>>>>>>>>>>>>>>fHOLD1: ");
+    Serial.println(fHold1);
   }
 }
