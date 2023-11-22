@@ -439,9 +439,11 @@ void loop(){
   if (deviceOn == true){
     togglePos = myMag1.getMeasurementZ();// raw mag reading 
     if(freqSweepMode){
+      Serial.println("4444444444444444444444");
       freqMode();
     }
     else{
+      Serial.println("55555555555555555555555");
       intensityMode();
     }
     
