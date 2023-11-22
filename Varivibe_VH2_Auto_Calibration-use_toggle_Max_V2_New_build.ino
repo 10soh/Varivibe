@@ -53,6 +53,7 @@ const int buttonPin = 4;
 bool buttonPressed = false;
 unsigned long buttonTimer = 0;
 unsigned long sleepTimer = 0;
+unsigned long awakeTimer = 0;
 int buttonHoldDur = 700;
 int buttonState; 
 
@@ -427,16 +428,20 @@ void intensityMode(){
 
 void loop(){
   buttonState = digitalRead(buttonPin);
-
+  Serial.println("RUNNING_----------------------------------");
   if (buttonState == LOW && buttonPressed == false){//button pressed detected
     Serial.println("11111111111111111");
     buttonMode();  
   }
-  else if(buttonState == HIGH && deviceOn){ //caused from opening
+  else if(buttonState == HIGH){ //caused from opening
     buttonPressed = false;
   }
-  
+
+  if(deviceOn == false &&  millis() -awakeTimer > 2500){
+    deepSleep();
+  }
   if (deviceOn == true){
+    awakeTimer = millis();
     togglePos = myMag1.getMeasurementZ();// raw mag reading 
     if(freqSweepMode){
       Serial.println("4444444444444444444444");
@@ -446,6 +451,5 @@ void loop(){
       Serial.println("55555555555555555555555");
       intensityMode();
     }
-    
   }
 }
