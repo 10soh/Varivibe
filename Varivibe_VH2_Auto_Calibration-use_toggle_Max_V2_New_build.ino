@@ -1,22 +1,25 @@
-//12345
-//#include "VHMasterPack.h"
-#include "VHBasicHapticCmds.h"
-#include "VHBasicFuncGenerator.h"
-#include "VHHeaders.h" // import this header at last
-#include "BluetoothAudioDev.h"
-#define VH_NAME "VHDevice"
-#define LOG_SERIAL true
-Pam8403 DrvPam8403;
-VectorHaptics<Esp32PicoMini> vh(&DrvPam8403);
-#define PIN1 21
-#define PIN2 19
-#define MASTER_PIN 22
+#include "VectorHaptics.h"
+#include "Esp32PicoMini.h"
+
+// Importing Required header files
+#include <VHChannelList.h>
+#include <VHCore.h>
+
+// Creating API object
+VectorHaptics<Esp32PicoMini> vh;
+//Creating object of core
+VHCore core;
+
+// Creating mono channel with channel number, gpio pin, channel tags
+VHChannel chnl1(1, 25,{"Left channel", "Channel 1", "Left", "Finger"});
+// Creating mono channel with channel number, gpio pin, channel tags
+VHChannel chnl2(2, 26,{"Right channel", "Channel 2", "Right", "Finger"});
+VHChannelList list({&chnl1,&chnl2});
 
 #include <CircularBuffer.h>
 #include <Preferences.h> //the library used to save data to memory
 Preferences preferences;
 
-BluetoothAudioDev btDev(VH_NAME);
 TaskHandle_t handle = NULL;
 
 
@@ -40,8 +43,8 @@ float fHold1 = 0.5 * (fMax + fMin); //holds the local max/min frequency toggled 
 float fHold2 = fHold1; //holds the previously reached min/max value as a starting point
 float fTransient = fHold1; //the transient frequency value to temporarily set fHold1 value
 
-float intMax = 1;
-float intMin = 0.3;
+float intMax = 1.0;
+float intMin = 0.1;
 float intHold1 = (intMax + intMin) * 0.5;
 float intHold2 = intHold1;
 float intTransient = intHold1;
@@ -86,57 +89,11 @@ int decThres;//the threshold values that triggers the increase/decrease in fTran
 #define BUTTON_PIN_BITMASK 0x200000000 // 2^33 in hex
 
 void setup(){
-  R_CHANNEL rightChannel;
-  rightChannel.ENABLE_ALL = true;
-  rightChannel.OUT_PIN = "R+/R-";
-  rightChannel.CHANNEL_DESC = "Right";
-
-  L_CHANNEL leftChannel;
-  leftChannel.ENABLE_ALL = true;
-  leftChannel.OUT_PIN = "L+/L-";
-  leftChannel.CHANNEL_DESC = "Left";
-
-  M_CHANNEL motorChannel;
-  motorChannel.ENABLE_ALL = true;
-  motorChannel.OUT_PIN = "M+/M-";
-  motorChannel.CHANNEL_DESC = "Hand";
-
-  BOARD_DESC info;
-  info.pR_CHANNEL = &rightChannel;
-  info.pL_CHANNEL = &leftChannel;
-  info.pM_CHANNEL = &motorChannel;
-
-  const int INFO_SIZE = 3;
-  ADDITIONAL_INFO addInfo[INFO_SIZE];
-  addInfo[0] = {"Motor Type", "Tack Hammer"};
-  addInfo[1] = {"Resonant Frequency", "1kHz"};
-  addInfo[2] = {"Gmin / Gmax", "1.234"};
-
-  info.pADDITIONAL_INFO = addInfo;
-  info.SIZE_OF_ADDITIONAL_INFO = INFO_SIZE;
-
-  DeviceInfo devInfo;
-  devInfo.setDeviceName(VH_NAME);
-  devInfo.setManufacturer("TitanHaptics");
-  devInfo.setSerialNumber("1234567890");
-  devInfo.setModelNumber("1234567890");
-  devInfo.setDeviceMode(MCU_MODE::DEVELOPMENT);
-  devInfo.setConnType(ConnType::USB_CONN, CMD_MODE::STRING_MODE);
-
+  vh.Init({&list,&core});
   preferences.begin("toggleRange", false);//begins a storage space in memory to permenantely store calibrated toggle range
   upperRange = preferences.getInt("upperRange", 5500);
   lowerRange = preferences.getInt("lowerRange", 2500);
   preferences.end();
-
-  vh.Init(&info, &devInfo);
-  vh.setF0(50); // Sets the default resonant frequency of the haptic actuator.  Affects VH primitives. Default is 100Hz
-  vh.setMinMax(0, 1);    // setMinMax(float min, float max) values between 0 and 1
-  vh.adjustTiming(1.16); // multiplier to correct timing.  Values < 1 speed up timing, and > 1 slow it down.  Depending on your clock sources and MCU, you may need to adjust this parameter to correct for deviations.  NOTE: May not impact all frequencies equally!
-  vh.turnOnBuiltinLED(true);   // to make sure the new OS is in effect turn on the builtin LED
-  vh.EnableDac(); // Enable the DAC
-  vh.TurnOnDrv();
-  vh.TurnOnPam(); // turn on the Pam amplifier
-  vh.setWaveCalibFactor(0.02);
 
   pinMode(buttonPin, INPUT_PULLUP);
   Serial.begin(115200);
@@ -150,7 +107,6 @@ void setup(){
 
   myMag1.softReset();
   myMag1.disableXChannel();//disable X channel because it's not being used
-  vh.logAllMessages(false);
 
   // For more info about deep sleep: https://randomnerdtutorials.com/esp32-external-wake-up-deep-sleep/
   print_wakeup_reason(); //Print the wakeup reason for ESP32
@@ -242,10 +198,12 @@ void turnPinOn(){
 void rampDown(){
   if (deviceOn == true){
     for (int i = 200; i > 0; i -= 30) {
-      vh.vibrate(i, 0.5, 2000 / i, dutyCycle, 0, 0);
+      vh.play({VHVIBRATE(i, 0.5, 2000 / i, dutyCycle, 0)}, "Finger");
+//      vh.vibrate(i, 0.5, 2000 / i, dutyCycle, 0, 0);
     }
-    vh.pause(150);
-    vh.pulse(300, 12);
+    vh.play({VHPAUSE(150), VHPULSE(300,12)}, "Finger");
+//    vh.pause(150);
+//    vh.pulse(300, 12);
   }
 }
 
@@ -257,7 +215,8 @@ void buttonMode(){
     while(buttonState != HIGH){ //not released 
       Serial.print("-------------------------fHOLD1: ");
       Serial.println(fHold1);
-      vh.vibrate(fHold1, intHold1, 50, dutyCycle, 0, 0);
+      vh.play({VHVIBRATE(fHold1, intHold1, (2000.0/fHold1), dutyCycle, 0)}, "Finger");
+//      vh.vibrate(fHold1, intHold1, 50, dutyCycle, 0, 0);
       if (millis() - buttonTimer > buttonHoldDur){ //Go to deepsleep
         Serial.println("In DEEP SLEEP MODE");
         sleepTimer = millis();
@@ -310,16 +269,19 @@ void thresholdAssign(){
 void modeSwitchBeep(){
   if (modeBeeped == false && freqSweepMode) {      //beeping indicating the mode
     for (int i = 40; i < 300; i = i + 30) {
-      vh.vibrate(i, 0.5, 2000 / i, dutyCycle, 0, 0);
+        vh.play({VHVIBRATE(i, 0.5, (2000.0 / i), dutyCycle, 0)}, "Finger");
+//      vh.vibrate(i, 0.5, 2000 / i, dutyCycle, 0, 0);
     }
       modeBeeped = true;
       delay(190);
   }
   else if (modeBeeped == false && !freqSweepMode) {    
     delay(50);
-    vh.vibrate(100, 0.5, 80, dutyCycle, 0, 0);
+    vh.play({VHVIBRATE(100, 0.5, (2000.0/100), dutyCycle, 0)}, "Finger");
+//    vh.vibrate(100, 0.5, 80, dutyCycle, 0, 0);
     delay(50);
-    vh.vibrate(100, 0.25, 80, dutyCycle, 0, 0);
+    vh.play({VHVIBRATE(100, 0.25, (2000.0/100), dutyCycle, 0)}, "Finger");
+//    vh.vibrate(100, 0.25, 80, dutyCycle, 0, 0);
       modeBeeped = true;
     delay(190);
   }
@@ -444,8 +406,12 @@ void loop(){
       Serial.println("55555555555555555555555");
       intensityMode();
     }
-    vh.vibrate(fHold1, intHold1, 25, dutyCycle, 0, 0);
+    vh.play({VHVIBRATE(fHold1, intHold1, (2000.0/fHold1), dutyCycle, 0)}, "Finger");
+//    vh.endVibration(); 
+//    vh.vibrate(fHold1, intHold1, 25, dutyCycle, 0, 0);
     Serial.print(">>>>>>>>>>>>>>>>>>>>>>>>fHOLD1: ");
     Serial.println(fHold1);
+    Serial.print(">>>>>>>>>>>>>>>>>>>>>>>>intHOLD1: ");
+    Serial.println(intHold1);
   }
 }
