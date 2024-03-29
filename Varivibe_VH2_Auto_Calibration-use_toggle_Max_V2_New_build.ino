@@ -41,6 +41,7 @@ unsigned long timePressed = 0;
 #include "driver/rtc_io.h"
 #define BUTTON_PIN_BITMASK 0x200000000 // 2^33 in hex
 const int buttonPin = 4;
+bool buttonPinStateFromOn = true;
 
 bool freqMode = true;//determines current mode: true = frequency sweep, false = intensity sweep
 bool modeBeeped = true;//indicates if the mode indication beep has been performed (once)
@@ -49,6 +50,8 @@ float thresh = 0.12;
 uint32_t offsetZ = 131072;
 double adjustedZ;
 double prevZ;
+bool calibrated = false; 
+double zStart;
 
 void setup(){
   Serial.begin(115200);
@@ -61,7 +64,7 @@ void setup(){
   myMag.softReset();
   myMag.disableXChannel();
   updateOffset(&offsetZ);
-  zAvg();
+  zSetup();
   print_wakeup_reason(); //Print the wakeup reason for ESP32
   esp_sleep_enable_ext0_wakeup(GPIO_NUM_4, 0); //1 = High, 0 = Low
 }
@@ -105,20 +108,26 @@ void updateOffset(uint32_t *offsetZ){
   }
 }
 
-void zAvg(){
+void zSetup(){
   for(int i = 0 ; i < 20; i ++){
       double z = getZ();
       avg.reading(z);
   }
   avgVal = avg.getAvg();
+  zStart = getZ();
 }
 
 void varivibeMain(){
   double z = getZ();
+
   maxVal = (z > maxVal) ? z: maxVal;
   minVal = (z < minVal) ? z: minVal;
   adjustedZ = ( z < avgVal) ? map(z, minVal, avgVal, -1.0, 0.0) : map(z, avgVal, maxVal, 0.0, 1.0);
-  if(prevZ < adjustedZ && adjustedZ > (avgVal + thresh)){ //only works for rising edge
+  if (!calibrated && zStart != z){
+    calibrated = true;
+  }
+  
+  if(prevZ < adjustedZ && adjustedZ > (avgVal + thresh) && calibrated){ //only works for rising edge
       if(freqMode){
         freqVal = (int) map(adjustedZ, avgVal, 1.0, freqVal, fMax);
       }
@@ -126,7 +135,7 @@ void varivibeMain(){
         intVal = map(adjustedZ, avgVal, 1.0, intVal, intMin);
       }
   }
-  else if(prevZ > adjustedZ && adjustedZ < (avgVal - thresh)) {//falling edge
+  else if(prevZ > adjustedZ && adjustedZ < (avgVal - thresh) && calibrated) {//falling edge
       if(freqMode){
         freqVal = (int) map(adjustedZ, avgVal, -1.0, freqVal, fMin);
       }
@@ -227,7 +236,7 @@ void buttonMode(){
   else if(totalTime > timeOnOff){  
     isOn  = !isOn;
     if(isOn){//if On;
-      freqMode = !freqMode;//because im lazy lol
+      buttonPinStateFromOn = false;
       turnPinOn();
     }
     else{
@@ -239,8 +248,13 @@ void buttonMode(){
 
 void loop() {
   buttonPinState = digitalRead(buttonPin);
-  if (buttonPinState == LOW){
+  if (!buttonPinStateFromOn && buttonPinState ==HIGH){
+    buttonPinStateFromOn = true;
+  }
+  
+  if (buttonPinState == LOW && buttonPinStateFromOn){
     buttonMode();
+    
   }
   if(isOn){
     awakeTimer = millis();
