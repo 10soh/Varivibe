@@ -15,6 +15,7 @@ VHChannelList list({&chnl1,&chnl2});
 #include <SparkFun_MMC5983MA_Arduino_Library.h> //Click here to get the library: http://librarymanager/All#SparkFun_MMC5983MA
 SFE_MMC5983MA myMag;
 
+double findZ = -1000;
 double maxVal = 0.0;
 double minVal = 0.0;
 double avgVal;
@@ -44,19 +45,22 @@ const int buttonPin = 4;
 bool buttonPinStateFromOn = true;
 
 bool freqMode = true;//determines current mode: true = frequency sweep, false = intensity sweep
-bool modeBeeped = true;//indicates if the mode indication beep has been performed (once)
+bool modeBeeped = false;//indicates if the mode indication beep has been performed (once)
 float dutyCycle = 0.5;
 float thresh = 0.12;
-uint32_t offsetZ = 131072;
+uint32_t offsetZ = 147500;
 double adjustedZ;
-double prevZ;
+double prevZ = -2;
 bool calibrated = false; 
 double zStart;
+uint32_t currentZ;
+double scaledZ;
 
 void setup(){
   Serial.begin(115200);
+  print_wakeup_reason(); //Print the wakeup reason for ESP32
+  esp_sleep_enable_ext0_wakeup(GPIO_NUM_4, 0); //1 = High, 0 = Low
   Wire.begin();
-  
   vh.Init({&list,&core});
   pinMode(buttonPin, INPUT_PULLUP);
   avg.begin();
@@ -65,8 +69,6 @@ void setup(){
   myMag.disableXChannel();
   updateOffset(&offsetZ);
   zSetup();
-  print_wakeup_reason(); //Print the wakeup reason for ESP32
-  esp_sleep_enable_ext0_wakeup(GPIO_NUM_4, 0); //1 = High, 0 = Low
 }
 
 //For ESP Deep Sleep Functionality
@@ -85,9 +87,8 @@ double map(double x, double in_min, double in_max, double out_min, double out_ma
 }
 
 double getZ(){
-  uint32_t currentZ;
   currentZ = myMag.getMeasurementZ();
-  double scaledZ = (double)currentZ - (double)offsetZ; // Convert to double _before_ subtracting
+  scaledZ = (double)currentZ - (double)offsetZ; // Convert to double _before_ subtracting
   scaledZ /= 131072.0;  
   return scaledZ; 
 }
@@ -119,13 +120,15 @@ void zSetup(){
 
 void varivibeMain(){
   double z = getZ();
-
+  double diffZ = (double)currentZ - (double)offsetZ; 
+  if (calibrated == false &&  abs(diffZ) > 150){
+    Serial.println("?????????");
+    calibrated = true;
+  }
   maxVal = (z > maxVal) ? z: maxVal;
   minVal = (z < minVal) ? z: minVal;
   adjustedZ = ( z < avgVal) ? map(z, minVal, avgVal, -1.0, 0.0) : map(z, avgVal, maxVal, 0.0, 1.0);
-  if (!calibrated && zStart != z){
-    calibrated = true;
-  }
+
   
   if(prevZ < adjustedZ && adjustedZ > (avgVal + thresh) && calibrated){ //only works for rising edge
       if(freqMode){
@@ -236,7 +239,7 @@ void buttonMode(){
   else if(totalTime > timeOnOff){  
     isOn  = !isOn;
     if(isOn){//if On;
-      buttonPinStateFromOn = false;
+      buttonPinStateFromOn = false; 
       turnPinOn();
     }
     else{
@@ -247,6 +250,11 @@ void buttonMode(){
 }
 
 void loop() {
+  
+//    findZ = (currentZ >  findZ) ? currentZ :  findZ;
+    
+    Serial.print("calibrated: ");
+    Serial.println(calibrated);
   buttonPinState = digitalRead(buttonPin);
   if (!buttonPinStateFromOn && buttonPinState ==HIGH){
     buttonPinStateFromOn = true;
@@ -265,6 +273,12 @@ void loop() {
     Serial.println(intVal);
     Serial.print("freqVal: ");
     Serial.println(freqVal);
+
+
+    Serial.print("currentZ: ");
+    Serial.println(currentZ);    
+
+    
   }
   if(isOn == false &&  millis() - awakeTimer > 2500){ //leave on for 2.5 before going into deepsleep
     deepSleep();
