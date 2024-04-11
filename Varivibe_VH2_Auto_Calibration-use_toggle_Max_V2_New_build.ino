@@ -24,10 +24,12 @@ movingAvgFloat avg(20);
 int fMax = 300;
 int fMin = 40;
 int freqVal = 0.5 * (fMax + fMin); //holds the local max/min frequency toggled by fTransient
+int freqLock;
 
 float intMax = 1.0;
 float intMin = 0.1;
 float intVal = 0.50;
+float intLock;
 
 bool isOn = false; //false = off; true = on;
 int buttonPinState;
@@ -55,6 +57,10 @@ bool calibrated = false;
 double zStart;
 uint32_t currentZ;
 double scaledZ;
+bool rising = false;
+bool prevRising = false;
+bool falling = false;
+bool prevFalling = false;
 
 void setup(){
   Serial.begin(115200);
@@ -119,6 +125,7 @@ void zSetup(){
 }
 
 void varivibeMain(){
+  
   double z = getZ();
   double diffZ = (double)currentZ - (double)offsetZ; 
   if (calibrated == false &&  abs(diffZ) > 150){
@@ -128,24 +135,43 @@ void varivibeMain(){
   maxVal = (z > maxVal) ? z: maxVal;
   minVal = (z < minVal) ? z: minVal;
   adjustedZ = ( z < avgVal) ? map(z, minVal, avgVal, -1.0, 0.0) : map(z, avgVal, maxVal, 0.0, 1.0);
-
+  
   
   if(prevZ < adjustedZ && adjustedZ > (avgVal + thresh) && calibrated){ //only works for rising edge
+
+//      adjustedZ = pow(2000, (adjustedZ - 1));
       if(freqMode){
-        freqVal = (int) map(adjustedZ, avgVal, 1.0, freqVal, fMax);
+        freqVal = (int) map(adjustedZ, 0.0, 1.0, freqLock, fMax);
       }
       else{
-        intVal = map(adjustedZ, avgVal, 1.0, intVal, intMin);
+        intVal = map(adjustedZ, avgVal, 1.0, intLock, intMin);
       }
   }
   else if(prevZ > adjustedZ && adjustedZ < (avgVal - thresh) && calibrated) {//falling edge
+
+//      adjustedZ = -1.0*pow(2000, ((-1.0)*adjustedZ) - 1));
       if(freqMode){
-        freqVal = (int) map(adjustedZ, avgVal, -1.0, freqVal, fMin);
+        freqVal = (int) map(adjustedZ, 0.0, -1.0, freqLock, fMin);
       }
       else{
-        intVal = map(adjustedZ, avgVal, -1.0, intVal, intMax);
+        intVal = map(adjustedZ, avgVal, -1.0, intLock, intMax);
       }
   }
+  else if (abs(adjustedZ) < thresh && calibrated){
+    Serial.println("Here!!!!!!!!!!!!!");
+    freqLock = freqVal;
+    intLock = intVal;
+  }
+  
+//  if( (!prevFalling && falling) || (!prevRising) && rising){
+//    Serial.println("Here!!!!!!!!!!!!!");
+//        freqLock = freqVal;
+//        intLock = intVal;
+//   }
+//   
+//   prevRising = rising;
+//   prevFalling = falling;
+  
   prevZ = adjustedZ;
   vh.play({VHVIBRATE(freqVal, intVal, (2000.0/freqVal), dutyCycle, 0)}, "Finger");
 }
@@ -222,7 +248,7 @@ void buttonMode(){
   unsigned long totalTime = 0;
   timePressed = millis();
   while (buttonPinState == LOW && totalTime < timeOnOff){
-    Serial.println("Button pressing");
+    Serial.println("Button pressing"); //DONT DELETE
     buttonPinState = digitalRead(buttonPin);
     totalTime = millis() - timePressed;
     if(isOn){
@@ -253,8 +279,8 @@ void loop() {
   
 //    findZ = (currentZ >  findZ) ? currentZ :  findZ;
     
-    Serial.print("calibrated: ");
-    Serial.println(calibrated);
+//    Serial.print("calibrated: ");
+//    Serial.println(calibrated);
   buttonPinState = digitalRead(buttonPin);
   if (!buttonPinStateFromOn && buttonPinState ==HIGH){
     buttonPinStateFromOn = true;
@@ -267,17 +293,23 @@ void loop() {
   if(isOn){
     awakeTimer = millis();
     varivibeMain(); 
-    Serial.print("freqMode: ");
-    Serial.println(freqMode);
-    Serial.print("intVal: ");
-    Serial.println(intVal);
-    Serial.print("freqVal: ");
-    Serial.println(freqVal);
-
-
-    Serial.print("currentZ: ");
-    Serial.println(currentZ);    
-
+//    Serial.print("freqMode: ");
+//    Serial.println(freqMode);
+//    Serial.print("intVal: ");
+//    Serial.println(intVal);
+//    Serial.print("freqVal: ");
+//    Serial.println(freqVal);
+//
+//
+//    Serial.print("currentZ: ");
+//    Serial.println(currentZ);    
+      Serial.print(freqVal);
+      Serial.print(",");
+      Serial.println(adjustedZ*300.0);
+//    Serial.print("freqVal: ");
+//    Serial.println(freqVal);
+//    Serial.print("adjustedZ: ");
+//    Serial.println(adjustedZ*300.0);
     
   }
   if(isOn == false &&  millis() - awakeTimer > 2500){ //leave on for 2.5 before going into deepsleep
