@@ -1,7 +1,6 @@
 #include "VectorHaptics.h"
 #include "Esp32PicoMini.h"
 #include <movingAvgFloat.h>
-// Importing Required header files
 #include <VHChannelList.h>
 #include <VHCore.h>
 VectorHaptics<Esp32PicoMini> vh;
@@ -13,18 +12,13 @@ VHChannelList list({&chnl1,&chnl2});
 
 #include <Wire.h>
 #include <SparkFun_MMC5983MA_Arduino_Library.h> //Click here to get the library: http://librarymanager/All#SparkFun_MMC5983MA
-#include <EEPROM.h>
-#define EEPROM_SIZE 2
 SFE_MMC5983MA myMag;
 #include <Preferences.h>
 Preferences preferences;
 
-
-double findZ = -1000;
 double maxVal;
 double minVal;
-double avgVal;
-movingAvgFloat avg(20);
+double avgVal = 0;
 
 int fMax = 300;
 int fMin = 40;
@@ -54,18 +48,13 @@ bool buttonPinStateFromOn = true;
 bool freqMode = true;//determines current mode: true = frequency sweep, false = intensity sweep
 bool modeBeeped = false;//indicates if the mode indication beep has been performed (once)
 float dutyCycle = 0.5;
-float thresh = 0.14;
+float thresh = 0.15;
+float fallingThresh = 0.30;
 uint32_t offsetZ = 147500;
 double adjustedZ;
 double prevZ = -2;
-bool calibrated = false; 
-double zStart;
 uint32_t currentZ;
 double scaledZ;
-bool rising = false;
-bool prevRising = false;
-bool falling = false;
-bool prevFalling = false;
 
 void setup(){
   Serial.begin(115200);
@@ -74,13 +63,11 @@ void setup(){
   Wire.begin();
   vh.Init({&list,&core});
   pinMode(buttonPin, INPUT_PULLUP);
-  avg.begin();
   myMag.begin();
   myMag.softReset();
   myMag.disableXChannel();
   updateOffset(&offsetZ);
   preferenceSetup();
-  zSetup();
 }
 
 void preferenceSetup(){
@@ -130,31 +117,15 @@ void updateOffset(uint32_t *offsetZ){
   }
 }
 
-void zSetup(){
-  for(int i = 0 ; i < 20; i ++){
-      double z = getZ();
-      avg.reading(z);
-  }
-  avgVal = avg.getAvg();
-  zStart = getZ();
-}
-
 void varivibeMain(){
   
   double z = getZ();
-  double diffZ = (double)currentZ - (double)offsetZ; 
-  if (calibrated == false &&  abs(diffZ) > 150){
-    Serial.println("?????????");
-    calibrated = true;
-  }
   maxVal = (z > maxVal) ? z: maxVal;
   minVal = (z < minVal) ? z: minVal;
   adjustedZ = ( z < avgVal) ? map(z, minVal, avgVal, -1.0, 0.0) : map(z, avgVal, maxVal, 0.0, 1.0);
   
-  
-  if(prevZ < adjustedZ && adjustedZ > (avgVal + thresh) && calibrated){ //only works for rising edge
+  if(prevZ < adjustedZ && adjustedZ > (avgVal + thresh)){ //only works for rising edge
       Serial.println("Rising Edge");
-//      adjustedZ = pow(2000, (adjustedZ - 1));
       if(freqMode){
         freqVal = (int) map(adjustedZ, 0.0, 1.0, freqLock, fMax);
       }
@@ -162,9 +133,8 @@ void varivibeMain(){
         intVal = map(adjustedZ, avgVal, 1.0, intLock, intMin);
       }
   }
-  else if(prevZ > adjustedZ && adjustedZ < (avgVal - thresh) && calibrated) {//falling edge
+  else if(prevZ > adjustedZ && adjustedZ < (avgVal - fallingThresh)) {
       Serial.println("Falling Edge");
-//      adjustedZ = -1.0*pow(2000, ((-1.0)*adjustedZ) - 1));
       if(freqMode){
         freqVal = (int) map(adjustedZ, 0.0, -1.0, freqLock, fMin);
       }
@@ -172,21 +142,12 @@ void varivibeMain(){
         intVal = map(adjustedZ, avgVal, -1.0, intLock, intMax);
       }
   }
-  else if (abs(adjustedZ) < thresh && calibrated){
-    Serial.println("Here!!!!!!!!!!!!!");
+  else if (abs(adjustedZ) < thresh ){
+    Serial.println("-----Resting State-----");
     freqLock = freqVal;
     intLock = intVal;
   }
-  
-//  if( (!prevFalling && falling) || (!prevRising) && rising){
-//    Serial.println("Here!!!!!!!!!!!!!");
-//        freqLock = freqVal;
-//        intLock = intVal;
-//   }
-//   
-//   prevRising = rising;
-//   prevFalling = falling;
-  
+
   prevZ = adjustedZ;
   vh.play({VHVIBRATE(freqVal, intVal, (2000.0/freqVal), dutyCycle, 0)}, "Finger");
 }
@@ -195,7 +156,6 @@ void turnPinOff(){
     Serial.println("Disable motor and haptic drivers");
     digitalWrite(32, LOW); //driver sleep pin
     digitalWrite(15, LOW);
-    // Make sure the LEDs are off
     digitalWrite(13, LOW); //RED
     digitalWrite(14, LOW); //GREEN
     digitalWrite(12, LOW); //YELLOW
@@ -220,7 +180,6 @@ void turnPinOn(){
     digitalWrite(13, HIGH ); //LED red
     digitalWrite(14, HIGH); //green
     digitalWrite(12, HIGH); //yellow
-
 }
 
 void turnOFF() { //"turn off" effect
@@ -229,7 +188,6 @@ void turnOFF() { //"turn off" effect
   preferences.putDouble("minVal", minVal);
   preferences.putDouble("maxVal", maxVal);
   preferences.end();
-  
   if (isOn == true){
     for (int i = 200; i > 0; i -= 30) {
       vh.play({VHVIBRATE(i, 0.5, 2000 / i, dutyCycle, 0)}, "Finger");
@@ -250,7 +208,7 @@ void deepSleep(){ //only call deepSleep by itself when it's awaken but device no
 void modeSwitchBeep(){
   if (modeBeeped == false && freqMode) {      //beeping indicating the mode
     for (int i = 40; i < 300; i = i + 30) {
-        vh.play({VHVIBRATE(i, 0.5, (2000.0 / i), dutyCycle, 0)}, "Finger");
+      vh.play({VHVIBRATE(i, 0.5, (2000.0 / i), dutyCycle, 0)}, "Finger");
     }
       modeBeeped = true;
       delay(190);
@@ -269,16 +227,14 @@ void buttonMode(){
   unsigned long totalTime = 0;
   timePressed = millis();
   while (buttonPinState == LOW && totalTime < timeOnOff){
-    Serial.println("Button pressing"); //DONT DELETE
     buttonPinState = digitalRead(buttonPin);
+    Serial.println("Button pressing"); //DONT DELETE
     totalTime = millis() - timePressed;
     if(isOn){
       varivibeMain(); 
     }
   }
-
   if (totalTime < timeOnOff && isOn) { //include debounce period
-
     modeSwitchBeep();
     freqMode = !freqMode;
     modeBeeped = false;
@@ -297,45 +253,16 @@ void buttonMode(){
 }
 
 void loop() {
-  
-//    findZ = (currentZ >  findZ) ? currentZ :  findZ;
-    
-//    Serial.print("calibrated: ");
-//    Serial.println(calibrated);
   buttonPinState = digitalRead(buttonPin);
-  if (!buttonPinStateFromOn && buttonPinState ==HIGH){
+  if (!buttonPinStateFromOn && buttonPinState ==HIGH){ // need this for not skipping buttons
     buttonPinStateFromOn = true;
   }
-  
   if (buttonPinState == LOW && buttonPinStateFromOn){
-    buttonMode();
-    
+    buttonMode();    
   }
   if(isOn){
     awakeTimer = millis();
     varivibeMain(); 
-//    Serial.print("freqMode: ");
-//    Serial.println(freqMode);
-//    Serial.print("intVal: ");
-//    Serial.println(intVal);
-//    Serial.print("freqVal: ");
-//    Serial.println(freqVal);
-//
-//
-//    Serial.print("currentZ: ");
-//    Serial.println(currentZ);    
-      Serial.print(freqVal);
-      Serial.print(",");
-      Serial.println(adjustedZ*300.0);
-      Serial.print("maxVal: ");
-      Serial.println(maxVal);
-      Serial.print("minVal: ");
-      Serial.println(minVal);
-//    Serial.print("freqVal: ");
-//    Serial.println(freqVal);
-//    Serial.print("adjustedZ: ");
-//    Serial.println(adjustedZ*300.0);
-    
   }
   if(isOn == false &&  millis() - awakeTimer > 2500){ //leave on for 2.5 before going into deepsleep
     deepSleep();
