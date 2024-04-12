@@ -13,11 +13,16 @@ VHChannelList list({&chnl1,&chnl2});
 
 #include <Wire.h>
 #include <SparkFun_MMC5983MA_Arduino_Library.h> //Click here to get the library: http://librarymanager/All#SparkFun_MMC5983MA
+#include <EEPROM.h>
+#define EEPROM_SIZE 2
 SFE_MMC5983MA myMag;
+#include <Preferences.h>
+Preferences preferences;
+
 
 double findZ = -1000;
-double maxVal = 0.0;
-double minVal = 0.0;
+double maxVal;
+double minVal;
 double avgVal;
 movingAvgFloat avg(20);
 
@@ -49,7 +54,7 @@ bool buttonPinStateFromOn = true;
 bool freqMode = true;//determines current mode: true = frequency sweep, false = intensity sweep
 bool modeBeeped = false;//indicates if the mode indication beep has been performed (once)
 float dutyCycle = 0.5;
-float thresh = 0.12;
+float thresh = 0.14;
 uint32_t offsetZ = 147500;
 double adjustedZ;
 double prevZ = -2;
@@ -74,7 +79,17 @@ void setup(){
   myMag.softReset();
   myMag.disableXChannel();
   updateOffset(&offsetZ);
+  preferenceSetup();
   zSetup();
+}
+
+void preferenceSetup(){
+  preferences.begin("calibrationVal", false);//begins a storage space in memory to permenantely store calibrated toggle range
+  minVal = preferences.getDouble("minVal", 0.0);
+  minVal *= 0.9;
+  maxVal = preferences.getDouble("maxVal", 0.0);
+  maxVal *= 0.9;
+  preferences.end();
 }
 
 //For ESP Deep Sleep Functionality
@@ -138,7 +153,7 @@ void varivibeMain(){
   
   
   if(prevZ < adjustedZ && adjustedZ > (avgVal + thresh) && calibrated){ //only works for rising edge
-
+      Serial.println("Rising Edge");
 //      adjustedZ = pow(2000, (adjustedZ - 1));
       if(freqMode){
         freqVal = (int) map(adjustedZ, 0.0, 1.0, freqLock, fMax);
@@ -148,7 +163,7 @@ void varivibeMain(){
       }
   }
   else if(prevZ > adjustedZ && adjustedZ < (avgVal - thresh) && calibrated) {//falling edge
-
+      Serial.println("Falling Edge");
 //      adjustedZ = -1.0*pow(2000, ((-1.0)*adjustedZ) - 1));
       if(freqMode){
         freqVal = (int) map(adjustedZ, 0.0, -1.0, freqLock, fMin);
@@ -209,6 +224,12 @@ void turnPinOn(){
 }
 
 void turnOFF() { //"turn off" effect
+  //save values
+  preferences.begin("calibrationVal", false);
+  preferences.putDouble("minVal", minVal);
+  preferences.putDouble("maxVal", maxVal);
+  preferences.end();
+  
   if (isOn == true){
     for (int i = 200; i > 0; i -= 30) {
       vh.play({VHVIBRATE(i, 0.5, 2000 / i, dutyCycle, 0)}, "Finger");
@@ -306,6 +327,10 @@ void loop() {
       Serial.print(freqVal);
       Serial.print(",");
       Serial.println(adjustedZ*300.0);
+      Serial.print("maxVal: ");
+      Serial.println(maxVal);
+      Serial.print("minVal: ");
+      Serial.println(minVal);
 //    Serial.print("freqVal: ");
 //    Serial.println(freqVal);
 //    Serial.print("adjustedZ: ");
