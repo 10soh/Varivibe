@@ -31,24 +31,26 @@ float intVal = 0.50;
 float intLock;
 
 bool isOn = false; //false = off; true = on;
-int buttonPinState;
-int lastbuttonPinState;
+int buttonState = LOW;
+int lastButtonState;
 unsigned long sleepTimer = 0;
 unsigned long awakeTimer = 0;
 int timeOnOff = 700; //0.7 sec to consider starting up/shutting down
 unsigned long timePressed = 0;
-
+bool buttonFromOn = false;
 
 //DEEP SLEEP/////////
 #include "driver/rtc_io.h"
 #define BUTTON_PIN_BITMASK 0x200000000 // 2^33 in hex
 const int buttonPin = 4;
 bool buttonPinStateFromOn = true;
+long lastDebounceTime = 0;  // the last time the output pin was toggled
+long debounceDelay = 50;
 
 bool freqMode = true;//determines current mode: true = frequency sweep, false = intensity sweep
 bool modeBeeped = false;//indicates if the mode indication beep has been performed (once)
 float dutyCycle = 0.5;
-float thresh = 0.15;
+float thresh = 0.20;
 float fallingThresh = 0.30;
 uint32_t offsetZ = 147500;
 double adjustedZ;
@@ -127,19 +129,19 @@ void varivibeMain(){
   if(prevZ < adjustedZ && adjustedZ > (avgVal + thresh)){ //only works for rising edge
       Serial.println("Rising Edge");
       if(freqMode){
-        freqVal = (int) map(adjustedZ, 0.0, 1.0, freqLock, fMax);
+        freqVal = (int) map(adjustedZ, thresh, 1.0, freqLock, fMax);
       }
       else{
-        intVal = map(adjustedZ, avgVal, 1.0, intLock, intMin);
+        intVal = map(adjustedZ, thresh, 1.0, intLock, intMin);
       }
   }
   else if(prevZ > adjustedZ && adjustedZ < (avgVal - fallingThresh)) {
       Serial.println("Falling Edge");
       if(freqMode){
-        freqVal = (int) map(adjustedZ, 0.0, -1.0, freqLock, fMin);
+        freqVal = (int) map(adjustedZ, -fallingThresh, -1.0, freqLock, fMin);
       }
       else{
-        intVal = map(adjustedZ, avgVal, -1.0, intLock, intMax);
+        intVal = map(adjustedZ, -fallingThresh, -1.0, intLock, intMax);
       }
   }
   else if (abs(adjustedZ) < thresh ){
@@ -199,8 +201,8 @@ void turnOFF() { //"turn off" effect
 
 void deepSleep(){ //only call deepSleep by itself when it's awaken but device not On
     turnPinOff();
-    while(buttonPinState == LOW && millis()- sleepTimer < 15000){
-      buttonPinState =  digitalRead(buttonPin);
+    while(buttonState == LOW && millis()- sleepTimer < 15000){
+      buttonState =  digitalRead(buttonPin);
     }
     esp_deep_sleep_start(); //put into deep sleep
 }
@@ -223,42 +225,46 @@ void modeSwitchBeep(){
   }
 }
 
+void turnOnOff(){  
+  isOn  = !isOn;
+  if(isOn){//if On;
+    buttonPinStateFromOn = false; 
+    turnPinOn();
+  }
+  else{
+    sleepTimer = millis();
+    turnOFF();
+  }
+}
+
 void buttonMode(){
-  unsigned long totalTime = 0;
-  timePressed = millis();
-  while (buttonPinState == LOW && totalTime < timeOnOff){
-    buttonPinState = digitalRead(buttonPin);
-    Serial.println("Button pressing"); //DONT DELETE
-    totalTime = millis() - timePressed;
-    if(isOn){
-      varivibeMain(); 
-    }
+  Serial.println("Button Mode -----");
+  if (buttonState == LOW){ //when pressed, set off timer
+    timePressed = millis();
   }
-  if (totalTime < timeOnOff && isOn) { //include debounce period
-    modeSwitchBeep();
-    freqMode = !freqMode;
-    modeBeeped = false;
-  }
-  else if(totalTime > timeOnOff){  
-    isOn  = !isOn;
-    if(isOn){//if On;
-      buttonPinStateFromOn = false; 
-      turnPinOn();
-    }
-    else{
-      sleepTimer = millis();
-      turnOFF();
-    }
+  else if(isOn && !buttonFromOn){
+      modeSwitchBeep();
+      freqMode = !freqMode;
+      modeBeeped = false;
   }
 }
 
 void loop() {
-  buttonPinState = digitalRead(buttonPin);
-  if (!buttonPinStateFromOn && buttonPinState ==HIGH){ // need this for not skipping buttons
-    buttonPinStateFromOn = true;
+  buttonState = digitalRead(buttonPin);
+  unsigned long totalTime = millis()- timePressed;
+  if ((millis() - lastDebounceTime) > debounceDelay && buttonState!=lastButtonState) {
+     //trig when button state changes + debounce consideration
+     buttonMode();    
+     lastDebounceTime = millis();
   }
-  if (buttonPinState == LOW && buttonPinStateFromOn){
-    buttonMode();    
+  if(totalTime > timeOnOff){
+    buttonFromOn = true;
+    turnOnOff();
+    timePressed = millis();
+  }
+  if(buttonState == HIGH){
+    timePressed = millis();  
+    buttonFromOn = false;
   }
   if(isOn){
     awakeTimer = millis();
@@ -267,4 +273,5 @@ void loop() {
   if(isOn == false &&  millis() - awakeTimer > 2500){ //leave on for 2.5 before going into deepsleep
     deepSleep();
   }
+  lastButtonState = buttonState;
 }
