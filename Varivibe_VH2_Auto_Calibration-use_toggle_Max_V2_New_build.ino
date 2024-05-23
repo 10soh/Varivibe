@@ -1,14 +1,14 @@
 #include "VectorHaptics.h"
 #include "Esp32PicoMini.h"
 #include <movingAvgFloat.h>
-#include <VHChannelList.h>
-#include <VHCore.h>
+#include <VHChannels.h>
+#include <VHBasePrimitives.h>
 VectorHaptics<Esp32PicoMini> vh;
-VHCore core;
+VHBasePrimitives core;
 
 VHChannel chnl1(1, 25,{"Left channel", "Channel 1", "Left", "Finger"});
 VHChannel chnl2(2, 26,{"Right channel", "Channel 2", "Right", "Finger"});
-VHChannelList list({&chnl1,&chnl2});
+VHChannels list({&chnl1,&chnl2});
 
 #include <Wire.h>
 #include <SparkFun_MMC5983MA_Arduino_Library.h> //Click here to get the library: http://librarymanager/All#SparkFun_MMC5983MA
@@ -151,7 +151,7 @@ void varivibeMain(){
   }
 
   prevZ = adjustedZ;
-  vh.play({VHVIBRATE(freqVal, intVal, (2000.0/freqVal), dutyCycle, 0)}, "Finger");
+  vh.play({VIBRATE(freqVal, intVal, (2000.0/freqVal), dutyCycle, 0)}, "Finger");
 }
 
 void turnPinOff(){
@@ -192,9 +192,9 @@ void turnOFF() { //"turn off" effect
   preferences.end();
   if (isOn == true){
     for (int i = 200; i > 0; i -= 30) {
-      vh.play({VHVIBRATE(i, 0.5, 2000 / i, dutyCycle, 0)}, "Finger");
+      vh.play({VIBRATE(i, 0.5, 2000 / i, dutyCycle, 0)}, "Finger");
     }
-    vh.play({VHPAUSE(150), VHPULSE(300,12)}, "Finger");
+    vh.play({PAUSE(150), PULSE(300,12)}, "Finger");
   }
   deepSleep();
 }
@@ -210,16 +210,16 @@ void deepSleep(){ //only call deepSleep by itself when it's awaken but device no
 void modeSwitchBeep(){
   if (modeBeeped == false && freqMode) {      //beeping indicating the mode
     for (int i = 40; i < 300; i = i + 30) {
-      vh.play({VHVIBRATE(i, 0.5, (2000.0 / i), dutyCycle, 0)}, "Finger");
+      vh.play({VIBRATE(i, 0.5, (2000.0 / i), dutyCycle, 0)}, "Finger");
     }
       modeBeeped = true;
       delay(190);
   }
   else if (modeBeeped == false && !freqMode) {    
     delay(50);
-    vh.play({VHVIBRATE(100, 0.5, (2000.0/100), dutyCycle, 0)}, "Finger");
+    vh.play({VIBRATE(100, 0.5, (2000.0/100), dutyCycle, 0)}, "Finger");
     delay(50);
-    vh.play({VHVIBRATE(100, 0.25, (2000.0/100), dutyCycle, 0)}, "Finger");
+    vh.play({VIBRATE(100, 0.25, (2000.0/100), dutyCycle, 0)}, "Finger");
     modeBeeped = true;
     delay(190);
   }
