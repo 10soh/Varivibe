@@ -42,7 +42,7 @@ bool buttonFromOn = false;
 //DEEP SLEEP/////////
 #include "driver/rtc_io.h"
 #define BUTTON_PIN_BITMASK 0x200000000 // 2^33 in hex
-const int buttonPin = 4;
+const int buttonPin = 2;
 bool buttonPinStateFromOn = true;
 long lastDebounceTime = 0;  // the last time the output pin was toggled
 long debounceDelay = 50;
@@ -50,9 +50,9 @@ long debounceDelay = 50;
 bool freqMode = true;//determines current mode: true = frequency sweep, false = intensity sweep
 bool modeBeeped = false;//indicates if the mode indication beep has been performed (once)
 float dutyCycle = 0.5;
-float thresh = 0.20;
-float fallingThresh = 0.30;
-uint32_t offsetZ = 147500;
+float thresh = 0.1;
+float fallingThresh = 0.2;
+uint32_t offsetZ = 131072;
 double adjustedZ;
 double prevZ = -2;
 uint32_t currentZ;
@@ -61,23 +61,30 @@ double scaledZ;
 void setup(){
   Serial.begin(115200);
   print_wakeup_reason(); //Print the wakeup reason for ESP32
-  esp_sleep_enable_ext0_wakeup(GPIO_NUM_4, 0); //1 = High, 0 = Low
+  esp_sleep_enable_ext0_wakeup(GPIO_NUM_2, 1); //1 = High, 0 = Low
   Wire.begin();
   vh.Init({&list,&core});
-  pinMode(buttonPin, INPUT_PULLUP);
+  pinMode(buttonPin, INPUT_PULLDOWN);
   myMag.begin();
   myMag.softReset();
   myMag.disableXChannel();
   updateOffset(&offsetZ);
   preferenceSetup();
+  flushZ();
 }
 
+void flushZ(){
+  for(int i = 0; i < 5; i++){
+    getZ();
+  }
+  avgVal = getZ();
+}
 void preferenceSetup(){
   preferences.begin("calibrationVal", false);//begins a storage space in memory to permenantely store calibrated toggle range
   minVal = preferences.getDouble("minVal", 0.0);
-  minVal *= 0.9;
+  minVal *= 0.65;
   maxVal = preferences.getDouble("maxVal", 0.0);
-  maxVal *= 0.9;
+  maxVal *= 0.65;
   preferences.end();
 }
 
@@ -126,8 +133,13 @@ void varivibeMain(){
   minVal = (z < minVal) ? z: minVal;
   adjustedZ = ( z < avgVal) ? map(z, minVal, avgVal, -1.0, 0.0) : map(z, avgVal, maxVal, 0.0, 1.0);
   
-  if(prevZ < adjustedZ && adjustedZ > (avgVal + thresh)){ //only works for rising edge
-      Serial.println("Rising Edge");
+  Serial.printf("adjustedZ: %f\n", adjustedZ);
+  Serial.printf("z: %f\n", z);
+  Serial.printf("prevZ: %f\n", prevZ);
+  Serial.printf("avgVal: %f\n", avgVal);
+
+  if(prevZ < adjustedZ && adjustedZ > (avgVal + thresh)){ //only works for rising edge //0.2
+      Serial.println("~~~~~~~~~~~~~~~~~Rising Edge~~~~~~~~~~~~~~~~~");
       if(freqMode){
         freqVal = (int) map(adjustedZ, thresh, 1.0, freqLock, fMax);
       }
@@ -135,8 +147,8 @@ void varivibeMain(){
         intVal = map(adjustedZ, thresh, 1.0, intLock, intMin);
       }
   }
-  else if(prevZ > adjustedZ && adjustedZ < (avgVal - fallingThresh)) {
-      Serial.println("Falling Edge");
+  else if(prevZ > adjustedZ && adjustedZ < (avgVal - fallingThresh)) {//0.2
+      Serial.println("!!!!!!!!!!!!!!!!!!!!!!Falling Edge!!!!!!!!!!!!!!!!!!!!!!");
       if(freqMode){
         freqVal = (int) map(adjustedZ, -fallingThresh, -1.0, freqLock, fMin);
       }
@@ -145,7 +157,7 @@ void varivibeMain(){
       }
   }
   else if (abs(adjustedZ) < thresh ){
-    Serial.println("-----Resting State-----");
+    Serial.println("-------------Resting State--------------");
     freqLock = freqVal;
     intLock = intVal;
   }
@@ -201,7 +213,8 @@ void turnOFF() { //"turn off" effect
 
 void deepSleep(){ //only call deepSleep by itself when it's awaken but device not On
     turnPinOff();
-    while(buttonState == LOW && millis()- sleepTimer < 15000){
+    // while(buttonState == LOW && millis()- sleepTimer < 15000){
+    while(buttonState == HIGH && millis()- sleepTimer < 15000){
       buttonState =  digitalRead(buttonPin);
     }
     esp_deep_sleep_start(); //put into deep sleep
@@ -239,8 +252,9 @@ void turnOnOff(){
 
 void buttonMode(){
   Serial.println("Button Mode -----");
-  if (buttonState == LOW){ //when pressed, set off timer
-    timePressed = millis();
+  // if (buttonState == LOW){ //when pressed, set off timer
+  if (buttonState == HIGH){
+      timePressed = millis();
   }
   else if(isOn && !buttonFromOn){
       modeSwitchBeep();
@@ -250,6 +264,14 @@ void buttonMode(){
 }
 
 void loop() {
+  Serial.println("~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~");
+  Serial.printf("freqMode: %d\n", freqMode);
+  Serial.printf("freqVal: %d\n", freqVal);
+  Serial.printf("intVal: %f\n", intVal);
+  Serial.printf("minVal: %f\n", minVal);
+  Serial.printf("maxVal: %f\n", maxVal);
+  Serial.println("~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~");
+
   buttonState = digitalRead(buttonPin);
   unsigned long totalTime = millis()- timePressed;
   if ((millis() - lastDebounceTime) > debounceDelay && buttonState!=lastButtonState) {
@@ -262,7 +284,8 @@ void loop() {
     turnOnOff();
     timePressed = millis();
   }
-  if(buttonState == HIGH){
+  // if(buttonState == HIGH){
+  if(buttonState == LOW){
     timePressed = millis();  
     buttonFromOn = false;
   }
